@@ -120,3 +120,13 @@ def test_describe_failure_marks_and_continues(cfg, conn, fake_lm, monkeypatch):
     res = ingest(cfg, conn)
     assert res.described == 0 and res.embedded == 3  # still embedded without descriptions
     assert {r[0] for r in conn.execute("SELECT described FROM cmd_texts")} == {-1}
+
+
+def test_lm_check_runs_on_first_use_right_after_boot(cfg, conn, monkeypatch):
+    """monotonic() is time since boot; the first availability check must not be skipped on a fresh machine."""
+    from recall import search as search_mod
+    from recall.lmstudio import LMStudio
+
+    monkeypatch.setattr(search_mod.time, "monotonic", lambda: 5.0)  # booted 5 s ago
+    monkeypatch.setattr(LMStudio, "available", lambda self: True)
+    assert Searcher(cfg, conn).lm_available()

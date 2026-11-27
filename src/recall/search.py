@@ -66,7 +66,7 @@ class Searcher:
         self.conn = conn
         self._lm = None
         self._vi = None
-        self._lm_ok: tuple[float, bool] = (0.0, False)
+        self._lm_ok: tuple[float, bool] | None = None  # (monotonic time checked, reachable); None = never checked
 
     # ---- lazy LM Studio / Chroma ---------------------------------------------------
     @property
@@ -84,8 +84,8 @@ class Searcher:
         return self._vi
 
     def lm_available(self, ttl: float = 30.0) -> bool:
-        checked, ok = self._lm_ok
-        if time.monotonic() - checked > ttl:
+        # monotonic() counts from boot, so "never checked" can't be encoded as time 0 (fresh VMs, login items).
+        if self._lm_ok is None or time.monotonic() - self._lm_ok[0] > ttl:
             self._lm_ok = (time.monotonic(), self.lm.available())
         return self._lm_ok[1]
 

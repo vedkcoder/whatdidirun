@@ -1,0 +1,44 @@
+# Pull-request checks: Linux tests + frontend tests, and a full Windows build whose installer
+# is uploaded as the `windows-installer` artifact so it can be tried before release.
+
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          enable-cache: true
+      - name: Backend tests
+        run: |
+          uv sync --locked
+          uv run pytest -q
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Frontend tests + build
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Docker image builds
+        run: docker build -t whatdidirun:ci .
+
+  windows:
+    uses: ./.github/workflows/build-windows.yml
