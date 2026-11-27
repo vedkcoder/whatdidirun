@@ -91,7 +91,8 @@ The container runs the web UI plus a background indexer that drains the spool, d
 git clone https://github.com/vedkcoder/whatdidirun.git
 cd whatdidirun
 cp .env.example .env              # set RECALL_UID/RECALL_GID to `id -u`/`id -g`
-docker compose up -d --build
+docker compose pull                # prebuilt image (amd64 + arm64) from ghcr.io
+docker compose up -d               # or: docker compose up -d --build, to build from source
 ```
 
 Then add the hook to `~/.bashrc`. With Docker, only the hook is needed on the host:
@@ -201,6 +202,21 @@ src/recall/
 web/            React + Vite + Tailwind frontend
 tests/
 ```
+
+## Releasing
+
+Releases are automated by [`.github/workflows/release.yml`](.github/workflows/release.yml):
+
+```bash
+# 1. bump `version` in pyproject.toml, then refresh the lockfile
+uv lock
+git commit -am "Release 0.2.0"
+# 2. tag and push. The tag must match the pyproject version.
+git tag -a v0.2.0 -m "WhatdidIRun?? 0.2.0"
+git push origin main v0.2.0
+```
+
+The workflow runs the tests, builds the wheel and sdist with the web UI bundled, and pushes a multi-arch image to `ghcr.io/vedkcoder/whatdidirun` tagged `0.2.0`, `0.2` and `latest`. It then creates a GitHub Release with generated notes. To release an existing tag again, open **Actions → Release → Run workflow** and enter the tag.
 
 ## Contributing
 

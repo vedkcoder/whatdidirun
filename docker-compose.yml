@@ -5,7 +5,8 @@
 # the bash hook appends to <data dir>/spool.jsonl, which is bind-mounted here.
 #
 #   cp .env.example .env      # adjust if needed
-#   docker compose up -d --build
+#   docker compose pull && docker compose up -d   # prebuilt image from ghcr.io
+#   docker compose up -d --build                  # or build from this checkout
 #   open http://127.0.0.1:8765
 #
 # One-off CLI commands run against the same data:
@@ -15,7 +16,7 @@
 services:
   whatdidirun:
     build: .
-    image: whatdidirun:latest
+    image: ghcr.io/vedkcoder/whatdidirun:${WHATDIDIRUN_VERSION:-latest}
     container_name: whatdidirun
     restart: unless-stopped
     # Write files as your host user so the host CLI and shell hook can share the data dir.
