@@ -2,7 +2,8 @@
 #   1. runs the backend and frontend tests,
 #   2. builds the Python wheel/sdist (with the web UI bundled),
 #   3. builds a multi-arch Docker image and pushes it to ghcr.io/<owner>/whatdidirun,
-#   4. creates a GitHub Release with generated notes and the wheel/sdist attached.
+#   4. builds the Windows installer (build-windows.yml),
+#   5. creates a GitHub Release (or updates an existing one) with the wheel, sdist and setup.exe attached.
 #
 # To (re)release an existing tag without pushing a new one: Actions → Release → Run workflow → enter the tag.
 
@@ -127,8 +128,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  windows:
+    needs: test
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      ref: ${{ github.event.inputs.tag || github.ref_name }}
+
   release:
-    needs: [package, docker]
+    needs: [package, docker, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -137,13 +144,17 @@ jobs:
         with:
           name: dist
           path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-installer
+          path: dist
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           image="ghcr.io/${{ github.repository_owner }}/whatdidirun:${TAG#v}"
-          notes=$(printf '### Docker\n\n```bash\ndocker pull %s\n```\n\n### Python\n\nDownload the wheel below and run `uv tool install <file>.whl`.\n' "$image")
+          notes=$(printf '### Windows\n\nDownload `WhatDidIRun-%s-setup.exe` below and run it.\n\n### Docker\n\n```bash\ndocker pull %s\n```\n\n### Python\n\nDownload the wheel below and run `uv tool install <file>.whl`.\n' "${TAG#v}" "$image")
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
           else

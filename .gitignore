@@ -7,3 +7,4 @@ __pycache__/
 src/recall/web/dist/
 *.tsbuildinfo
 .venv/
+build/

@@ -1,0 +1,107 @@
+# Builds the Windows app + installer. Called by ci.yml (pull requests) and release.yml (tags).
+# Produces the artifact `windows-installer` containing WhatDidIRun-<version>-setup.exe.
+
+name: Build Windows
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build web UI
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - uses: astral-sh/setup-uv@v10.4.0
+        with:
+          enable-cache: true
+      - name: Install (tray extra + PyInstaller)
+        run: uv sync --locked --extra tray --group windows
+
+      - name: Tests on Windows
+        run: uv run pytest -q
+
+      - name: PyInstaller
+        run: uv run pyinstaller packaging/windows/whatdidirun.spec --noconfirm --distpath dist --workpath build
+
+      - name: Smoke test recall.exe
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:RECALL_DATA_DIR = Join-Path $env:RUNNER_TEMP 'recall-smoke'
+          $env:RECALL_LLM_BASE_URL = 'http://127.0.0.1:9'
+          $recall = Resolve-Path dist/WhatDidIRun/recall.exe
+          & $recall --help
+          if ($LASTEXITCODE) { throw "recall --help failed" }
+          New-Item -ItemType Directory -Force $env:RECALL_DATA_DIR | Out-Null
+          '{"cmd":"Get-ChildItem C:\\Windows","cwd":"C:\\","exit":0,"start":"1764200000.1","end":"1764200000.2","host":"ci","session":"s","shell":"pwsh"}' |
+            Set-Content -Encoding ascii (Join-Path $env:RECALL_DATA_DIR 'spool.jsonl')
+          & $recall ingest --no-embed --no-describe
+          if ($LASTEXITCODE) { throw "recall ingest failed" }
+          $out = & $recall search Get-ChildItem
+          $out
+          if (-not ($out -match 'Get-ChildItem')) { throw "search did not find the ingested command" }
+          & $recall stats
+          & $recall init powershell
+          if (-not (Test-Path dist/WhatDidIRun/_internal/recall/web/dist/index.html)) { throw "web UI missing from bundle" }
+
+      - name: Test the PowerShell hook
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:RECALL_DATA_DIR = Join-Path $env:RUNNER_TEMP 'recall-hook'
+          . (Resolve-Path dist/WhatDidIRun/_internal/recall/capture/recall.ps1)
+          $now = Get-Date
+          Add-History -InputObject ([pscustomobject]@{ CommandLine = 'git status'; ExecutionStatus = 'Completed'; StartExecutionTime = $now.AddSeconds(-2); EndExecutionTime = $now })
+          prompt | Out-Null
+          Add-History -InputObject ([pscustomobject]@{ CommandLine = ' secret-thing'; ExecutionStatus = 'Completed'; StartExecutionTime = $now; EndExecutionTime = $now })
+          prompt | Out-Null
+          prompt | Out-Null   # no new history: must not duplicate
+          $lines = @(Get-Content (Join-Path $env:RECALL_DATA_DIR 'spool.jsonl'))
+          $lines
+          if ($lines.Count -ne 1) { throw "expected 1 spool line, got $($lines.Count)" }
+          $rec = $lines[0] | ConvertFrom-Json
+          if ($rec.cmd -ne 'git status' -or $rec.exit -ne 0 -or $rec.shell -ne 'pwsh') { throw "bad record: $($lines[0])" }
+          if ([double]$rec.end - [double]$rec.start -lt 1.5) { throw "bad timing: $($lines[0])" }
+
+      - name: Install Inno Setup
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build installer
+        run: |
+          $version = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging/windows/whatdidirun.iss
+          if ($LASTEXITCODE) { throw "ISCC failed" }
+          Get-ChildItem dist/installer
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer
+          path: dist/installer/*.exe
+          if-no-files-found: error

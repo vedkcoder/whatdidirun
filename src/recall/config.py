@@ -1,4 +1,9 @@
-"""Configuration: ~/.config/recall/config.toml, overridden by RECALL_* env vars."""
+"""Configuration: a TOML file overridden by RECALL_* env vars.
+
+Default locations (overridable with RECALL_CONFIG / RECALL_DATA_DIR):
+  Linux/macOS  config ~/.config/recall/config.toml   data ~/.local/share/recall
+  Windows      config %APPDATA%\\recall\\config.toml   data %LOCALAPPDATA%\\recall
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,22 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-CONFIG_PATH = Path(os.environ.get("RECALL_CONFIG", "~/.config/recall/config.toml")).expanduser()
+IS_WINDOWS = os.name == "nt"
+
+
+def _win_dir(env: str, fallback: str) -> Path:
+    return Path(os.environ.get(env) or Path.home() / fallback) / "recall"
+
+
+def default_config_path(windows: bool = IS_WINDOWS) -> Path:
+    return _win_dir("APPDATA", "AppData/Roaming") / "config.toml" if windows else Path("~/.config/recall/config.toml").expanduser()
+
+
+def default_data_dir(windows: bool = IS_WINDOWS) -> Path:
+    return _win_dir("LOCALAPPDATA", "AppData/Local") if windows else Path("~/.local/share/recall").expanduser()
+
+
+CONFIG_PATH = Path(os.environ["RECALL_CONFIG"]).expanduser() if os.environ.get("RECALL_CONFIG") else default_config_path()
 
 # (config attribute, env var, type)
 _ENV = [
@@ -31,7 +51,7 @@ def _to_bool(v: str | bool) -> bool:
 
 @dataclass
 class Config:
-    data_dir: Path = Path("~/.local/share/recall").expanduser()
+    data_dir: Path = field(default_factory=default_data_dir)
     llm_base_url: str = "http://localhost:1234/v1"
     llm_api_key: str = "lm-studio"
     embed_model: str = "text-embedding-nomic-embed-text-v1.5"

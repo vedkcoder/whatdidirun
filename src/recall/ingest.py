@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -26,19 +25,48 @@ class IngestResult:
     warnings: list[str] = field(default_factory=list)
 
 
-@contextmanager
-def _lock(path: Path, blocking: bool = True):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as fh:
+if os.name == "nt":
+    import msvcrt
+
+    def _try_lock(fh) -> bool:
+        fh.seek(0)  # msvcrt locks from the current position; "a+" starts at EOF
         try:
-            fcntl.flock(fh, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    def _unlock(fh) -> None:
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _try_lock(fh) -> bool:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
         except BlockingIOError:
-            yield False
-            return
+            return False
+
+    def _unlock(fh) -> None:
+        fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _lock(path: Path, blocking: bool = True, poll: float = 0.1):
+    """Exclusive inter-process lock on `path`. Yields False instead of waiting when blocking=False and it's held."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as fh:
+        while not _try_lock(fh):
+            if not blocking:
+                yield False
+                return
+            time.sleep(poll)
         try:
             yield True
         finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            _unlock(fh)
 
 
 def git_info(cwd: str | None, _cache: dict[str, tuple[str | None, str | None]] = {}) -> tuple[str | None, str | None]:
@@ -110,7 +138,13 @@ def ingest_spool(conn: sqlite3.Connection, cfg: Config) -> tuple[int, int]:
     # Atomically take ownership of the current spool; shells open it with >> per command,
     # so new commands land in a fresh file. Leftovers from a crashed run are picked up too.
     if spool.exists():
-        spool.rename(spool.with_name(f"spool.{os.getpid()}.{time.time_ns()}.processing"))
+        target = spool.with_name(f"spool.{os.getpid()}.{time.time_ns()}.processing")
+        for attempt in range(5):
+            try:
+                spool.rename(target)
+                break
+            except PermissionError:  # Windows: a shell is appending right now; retry, else leave it for next time
+                time.sleep(0.05 * (attempt + 1))
     ignore = [re.compile(p) for p in cfg.ignore_patterns]
     stored = skipped = 0
     for chunk in sorted(spool.parent.glob("spool.*.processing")):

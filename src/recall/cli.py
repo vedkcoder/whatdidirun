@@ -13,8 +13,19 @@ import typer
 from .config import load_config
 from .db import connect
 
+def _safe_streams() -> None:
+    # Windows consoles/pipes often use a legacy code page; never crash on ✓/✗ or non-ASCII commands.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure") and (stream.encoding or "").lower().replace("-", "") != "utf8":
+            try:
+                stream.reconfigure(errors="replace")
+            except (ValueError, OSError):
+                pass
+
+
+_safe_streams()
+
 app = typer.Typer(help="Index your terminal commands and search them in natural language.", no_args_is_help=True, add_completion=False)
-CAPTURE_DIR = Path(__file__).parent / "capture"
 
 
 def _ctx():
@@ -27,11 +38,28 @@ def _err(msg: str) -> None:
 
 
 @app.command()
-def init(shell: Annotated[str, typer.Argument(help="Shell to emit the hook for")] = "bash") -> None:
-    """Print the line to add to your shell rc file."""
-    if shell != "bash":
-        raise typer.BadParameter("only bash is supported for now")
-    typer.echo(f'# recall: add to ~/.bashrc\nsource "{CAPTURE_DIR / "recall.bash"}"')
+def init(
+    shell: Annotated[str, typer.Argument(help="bash or powershell")] = "bash",
+    install: Annotated[bool, typer.Option("--install", help="PowerShell: add the hook to your profile(s)")] = False,
+    uninstall: Annotated[bool, typer.Option("--uninstall", help="PowerShell: remove the hook from your profile(s)")] = False,
+) -> None:
+    """Print the line to add to your shell startup file (or, for PowerShell, install it)."""
+    from . import shells
+
+    shell = {"pwsh": "powershell"}.get(shell.lower(), shell.lower())
+    if shell == "bash":
+        if install or uninstall:
+            raise typer.BadParameter("--install/--uninstall are for powershell; add the line below to ~/.bashrc")
+        typer.echo(f"# recall: add to ~/.bashrc\n{shells.bash_line()}")
+        return
+    if shell != "powershell":
+        raise typer.BadParameter("supported shells: bash, powershell")
+    if not (install or uninstall):
+        typer.echo(f"# recall: add to your PowerShell profile ($PROFILE)\n{shells.powershell_line()}")
+        return
+    for profile in shells.powershell_profiles():
+        changed = shells.uninstall_profile(profile) if uninstall else shells.install_profile(profile, shells.powershell_line())
+        typer.echo(f"{'updated' if changed else 'unchanged'}  {profile}")
 
 
 @app.command()
@@ -54,18 +82,25 @@ def ingest(
 
 @app.command("import")
 def import_(
-    path: Annotated[Path, typer.Argument(help="History file")] = Path("~/.bash_history"),
+    path: Annotated[Optional[Path], typer.Argument(help="History file (default: ~/.bash_history, or PSReadLine history on Windows)")] = None,
+    fmt: Annotated[str, typer.Option("--format", help="auto, bash or psreadline")] = "auto",
     embed: Annotated[bool, typer.Option(help="Describe + embed imported commands via LM Studio")] = True,
 ) -> None:
-    """Import an existing bash history file (idempotent)."""
-    from .importers import import_bash_history
+    """Import an existing bash or PowerShell (PSReadLine) history file (idempotent)."""
+    from .config import IS_WINDOWS
+    from .importers import import_history, psreadline_history_path
     from .ingest import ingest as run_ingest
 
     cfg, conn = _ctx()
+    if path is None:
+        path = psreadline_history_path() if IS_WINDOWS else Path("~/.bash_history")
     path = path.expanduser()
     if not path.exists():
         raise typer.BadParameter(f"{path} does not exist")
-    n, skipped = import_bash_history(conn, path, [re.compile(p) for p in cfg.ignore_patterns])
+    try:
+        n, skipped = import_history(conn, path, [re.compile(p) for p in cfg.ignore_patterns], fmt)
+    except ValueError as e:
+        raise typer.BadParameter(str(e))
     typer.echo(f"imported {n} commands from {path} ({skipped} skipped/duplicates)")
     if embed:
         typer.echo("describing + embedding (first run over a large history can take a few minutes)…")
@@ -158,6 +193,17 @@ def web(
 
 
 @app.command()
+def tray() -> None:
+    """Run in the system tray: web UI + background indexer (Windows app; needs the `tray` extra)."""
+    try:
+        from .tray import run
+    except ImportError as e:
+        _err(f"tray support isn't installed ({e.name}); install with: uv tool install 'whatdidirun[tray]'")
+        raise typer.Exit(1)
+    run(load_config())
+
+
+@app.command()
 def reindex() -> None:
     """Drop the vector index and re-embed everything (e.g. after changing RECALL_EMBED_MODEL)."""
     from .lmstudio import LMStudio
@@ -208,7 +254,10 @@ def doctor() -> None:
     except LMStudioError as e:
         typer.secho(str(e), fg="red")
     hook = cfg.spool_path.exists() or conn.execute("SELECT 1 FROM commands WHERE source='hook' LIMIT 1").fetchone()
-    typer.echo(f"shell hook   {'capturing' if hook else 'no commands captured yet — run `recall init bash`'}")
+    from .config import IS_WINDOWS
+
+    hint = "run `recall init powershell --install`" if IS_WINDOWS else "run `recall init bash`"
+    typer.echo(f"shell hook   {'capturing' if hook else f'no commands captured yet: {hint}'}")
 
 
 if __name__ == "__main__":
