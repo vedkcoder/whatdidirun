@@ -1,0 +1,12 @@
+.git
+.venv
+.pytest_cache
+**/__pycache__
+**/*.pyc
+dist/
+web/node_modules
+web/tsconfig.tsbuildinfo
+src/recall/web/dist
+.env
+Dockerfile
+docker-compose.yml

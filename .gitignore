@@ -1,0 +1,9 @@
+dist/
+.env
+node_modules/
+*.pyc
+__pycache__/
+.pytest_cache/
+src/recall/web/dist/
+*.tsbuildinfo
+.venv/

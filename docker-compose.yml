@@ -1,0 +1,43 @@
+# WhatdidIRun?? in Docker: the web UI plus a background indexer that drains the spool,
+# writes LLM descriptions and embeds new commands once a minute.
+#
+# Command capture still happens in your host shell (see README → "Option B: Docker Compose"):
+# the bash hook appends to <data dir>/spool.jsonl, which is bind-mounted here.
+#
+#   cp .env.example .env      # adjust if needed
+#   docker compose up -d --build
+#   open http://127.0.0.1:8765
+#
+# One-off CLI commands run against the same data:
+#   docker compose run --rm whatdidirun doctor
+#   docker compose run --rm whatdidirun search "docker build that failed"
+
+services:
+  whatdidirun:
+    build: .
+    image: whatdidirun:latest
+    container_name: whatdidirun
+    restart: unless-stopped
+    # Write files as your host user so the host CLI and shell hook can share the data dir.
+    user: "${RECALL_UID:-1000}:${RECALL_GID:-1000}"
+    ports:
+      # The UI has no authentication: keep it on loopback unless you know what you're doing.
+      - "127.0.0.1:${RECALL_WEB_PORT:-8765}:8765"
+    environment:
+      RECALL_LLM_BASE_URL: ${RECALL_LLM_BASE_URL:-http://host.docker.internal:1234/v1}
+      RECALL_LLM_API_KEY: ${RECALL_LLM_API_KEY:-lm-studio}
+      RECALL_EMBED_MODEL: ${RECALL_EMBED_MODEL:-text-embedding-nomic-embed-text-v1.5}
+      RECALL_CHAT_MODEL: ${RECALL_CHAT_MODEL:-}
+      RECALL_REASONING_EFFORT: ${RECALL_REASONING_EFFORT:-none}
+      RECALL_LLM_ENABLED: ${RECALL_LLM_ENABLED:-1}
+      RECALL_DESCRIBE: ${RECALL_DESCRIBE:-1}
+    extra_hosts:
+      # Lets the container reach LM Studio running on the host (Linux needs this; Docker Desktop has it built in).
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Same directory the host shell hook writes to.
+      - ${RECALL_HOST_DATA_DIR:-${HOME}/.local/share/recall}:/data
+      # Read-only view of your home directory at the same path, so the indexer can find the
+      # git repo/branch for each command's working directory. Remove it if you don't want that;
+      # everything else still works, but repo filters will be empty for commands indexed here.
+      - ${HOME}:${HOME}:ro
