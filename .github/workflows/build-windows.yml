@@ -100,6 +100,50 @@ jobs:
           if ($LASTEXITCODE) { throw "ISCC failed" }
           Get-ChildItem dist/installer
 
+      - name: Install, run and uninstall (silent)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = (Get-ChildItem dist/installer/*.exe)[0].FullName
+          $log = Join-Path $env:RUNNER_TEMP 'setup.log'
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS="powershell,autostart"', "/LOG=`"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 40; throw "setup exited with $($p.ExitCode)" }
+
+          $app = Join-Path $env:LOCALAPPDATA 'Programs\WhatDidIRun'
+          $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'What did I Run'
+          $docs = [Environment]::GetFolderPath('MyDocuments')
+          $profiles = @("$docs\PowerShell\Microsoft.PowerShell_profile.ps1", "$docs\WindowsPowerShell\Microsoft.PowerShell_profile.ps1")
+          $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          function Test-UserPath { ([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains $app }
+
+          foreach ($f in "$app\recall.exe", "$app\WhatDidIRun.exe", "$menu\What did I Run.lnk") { if (-not (Test-Path -LiteralPath $f)) { throw "missing after install: $f" } }
+          if (-not (Test-UserPath)) { throw 'install dir not on user PATH' }
+          if (-not (Get-ItemProperty $runKey -Name WhatDidIRun -ErrorAction SilentlyContinue)) { throw 'login item missing' }
+          foreach ($f in $profiles) { if (-not (Select-String -LiteralPath $f -SimpleMatch 'whatdidirun (recall)' -Quiet)) { throw "hook not in $f" } }
+          & "$app\recall.exe" --help | Out-Null
+          if ($LASTEXITCODE) { throw 'installed recall.exe failed' }
+
+          # The tray app should serve the web UI.
+          $env:RECALL_DATA_DIR = Join-Path $env:RUNNER_TEMP 'recall-tray'
+          Start-Process "$app\WhatDidIRun.exe"
+          $ok = $false
+          foreach ($i in 1..60) {
+            try { if ((Invoke-RestMethod http://127.0.0.1:8765/api/health -TimeoutSec 2).embed_model) { $ok = $true; break } } catch { }
+            Start-Sleep 2
+          }
+          if (-not $ok) { throw 'tray app did not serve the web UI within 120 s' }
+          (Invoke-WebRequest http://127.0.0.1:8765/ -UseBasicParsing).Content.Substring(0, 60)
+
+          # Uninstall (the uninstaller relaunches itself from %TEMP%, so wait for the files to go).
+          Start-Process "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
+          foreach ($i in 1..60) { if (-not (Test-Path "$app\recall.exe")) { break }; Start-Sleep 2 }
+          if (Test-Path "$app\recall.exe") { throw 'uninstall left files behind' }
+          if (Test-Path -LiteralPath "$menu\What did I Run.lnk") { throw 'Start Menu shortcut left behind' }
+          if (Test-UserPath) { throw 'PATH entry left behind' }
+          if (Get-ItemProperty $runKey -Name WhatDidIRun -ErrorAction SilentlyContinue) { throw 'login item left behind' }
+          foreach ($f in $profiles) { if ((Test-Path $f) -and (Select-String -LiteralPath $f -SimpleMatch 'whatdidirun (recall)' -Quiet)) { throw "hook left in $f" } }
+          if (Get-Process WhatDidIRun -ErrorAction SilentlyContinue) { throw 'tray app still running after uninstall' }
+          'install / tray / uninstall OK'
+
       - uses: actions/upload-artifact@v7
         with:
           name: windows-installer
