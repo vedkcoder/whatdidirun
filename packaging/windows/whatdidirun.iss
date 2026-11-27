@@ -10,6 +10,9 @@
   #define AppVersion "0.0.0"
 #endif
 #define AppName "What did I Run ??"
+; Used for anything that becomes a file or folder name (Start Menu group, shortcuts):
+; Windows forbids \ / : * ? " < > | in names, so the display name can't be used there.
+#define FileName "What did I Run"
 #define AppExe "WhatDidIRun.exe"
 #define SrcDir "..\..\dist\WhatDidIRun"
 
@@ -22,7 +25,7 @@ AppPublisher=vedkcoder
 AppPublisherURL=https://github.com/vedkcoder/whatdidirun
 AppSupportURL=https://github.com/vedkcoder/whatdidirun/issues
 DefaultDirName={localappdata}\Programs\WhatDidIRun
-DefaultGroupName={#AppName}
+DefaultGroupName={#FileName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ChangesEnvironment=yes
@@ -48,8 +51,8 @@ Name: "autostart"; Description: "Start {#AppName} in the system tray when I sign
 Source: "{#SrcDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
+Name: "{group}\{#FileName}"; Filename: "{app}\{#AppExe}"
+Name: "{group}\Uninstall {#FileName}"; Filename: "{uninstallexe}"
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; \
