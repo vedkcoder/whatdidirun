@@ -1,4 +1,4 @@
-# WhatdidIRun??
+# What did I Run ??
 
 **Search your shell history in plain English, with every model running locally.**
 
