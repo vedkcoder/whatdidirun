@@ -110,15 +110,18 @@ function global:__recall_bind_key {
         -Description 'Search your command history in plain English (What did I Run ??)' -ScriptBlock {
         $line = $null; $cursor = $null
         [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
-        $prevEnc = [Console]::OutputEncoding
-        $prevPy = $env:PYTHONIOENCODING
+        # On Windows the picker draws on stdout, so don't capture it: give the picker the real console
+        # (Start-Process -NoNewWindow) and read the chosen command back from a temp file.
+        $tmp = [IO.Path]::GetTempFileName()
+        $prevQuery = $env:RECALL_TUI_QUERY
+        $out = $null
         try {
-            [Console]::OutputEncoding = [Text.Encoding]::UTF8
-            $env:PYTHONIOENCODING = 'utf-8'
-            $out = (& $global:__recall_bin tui --query $line) -join "`n"
+            $env:RECALL_TUI_QUERY = $line
+            Start-Process -FilePath $global:__recall_bin -ArgumentList @('tui', '--out', "`"$tmp`"") -NoNewWindow -Wait
+            $out = [IO.File]::ReadAllText($tmp, $global:__recall_utf8)
         } finally {
-            [Console]::OutputEncoding = $prevEnc
-            $env:PYTHONIOENCODING = $prevPy
+            $env:RECALL_TUI_QUERY = $prevQuery
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         }
         [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
         if ($out) {
