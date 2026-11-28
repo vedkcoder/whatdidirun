@@ -124,8 +124,11 @@ def run(cfg: Config) -> None:
         server.should_exit = True
         icon.stop()
 
+    open_settings = lambda icon=None, item=None: webbrowser.open(ui_url(cfg) + "/#settings")  # noqa: E731
+
     items = [
         pystray.MenuItem(f"Open {APP_NAME}", open_ui, default=True),
+        pystray.MenuItem("Settings…", open_settings),
         pystray.MenuItem("Index now", lambda icon, item: _index_now(cfg, icon)),
     ]
     if os.name == "nt":

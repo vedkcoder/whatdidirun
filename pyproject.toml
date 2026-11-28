@@ -1,7 +1,7 @@
 [project]
 name = "whatdidirun"
-version = "0.1.5"
-description = "Index your terminal commands and search them in natural language (LM Studio + ChromaDB + BM25)"
+version = "0.2.0"
+description = "Index your terminal commands and search them in natural language, with your choice of AI provider (local or cloud)"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

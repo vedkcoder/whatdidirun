@@ -3,14 +3,27 @@ import { DetailDrawer } from "./components/DetailDrawer";
 import { Filters, type FilterState } from "./components/Filters";
 import { ResultList } from "./components/ResultList";
 import { SearchBar } from "./components/SearchBar";
+import { Settings } from "./components/Settings";
 import { Stats } from "./components/Stats";
 import { api, type Health, type Result, type SearchResponse } from "./lib/api";
 import { TIME_RANGES } from "./lib/format";
 
-type Tab = "search" | "stats";
+type Tab = "search" | "stats" | "settings";
+const TABS: Tab[] = ["search", "stats", "settings"];
+
+// The tab lives in the URL hash, so the tray app can open #settings directly.
+function tabFromHash(): Tab {
+  const t = window.location.hash.replace(/^#\/?/, "") as Tab;
+  return TABS.includes(t) ? t : "search";
+}
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("search");
+  const [tab, setTabState] = useState<Tab>(tabFromHash);
+  const setTab = useCallback((t: Tab) => {
+    setTabState(t);
+    const hash = t === "search" ? "" : `#${t}`;
+    if (window.location.hash !== hash) history.replaceState(null, "", hash || window.location.pathname + window.location.search);
+  }, []);
   const [query, setQuery] = useState("");
   const [smart, setSmart] = useState(false);
   const [filters, setFilters] = useState<FilterState>({ range: 0, status: "any", repo: "" });
@@ -24,10 +37,17 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    api.facets().then((f) => setRepos(f.repos)).catch(() => {});
+  const refreshHealth = useCallback(() => {
     api.health().then(setHealth).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    api.facets().then((f) => setRepos(f.repos)).catch(() => {});
+    refreshHealth();
+    const onHash = () => setTabState(tabFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [refreshHealth]);
 
   // Debounced search; smart mode waits longer since each call hits the LLM.
   useEffect(() => {
@@ -82,7 +102,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, setTab]);
 
   const results = resp?.results ?? [];
   const onInputKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -107,7 +127,7 @@ export default function App() {
           <span className="text-lg font-semibold tracking-tight">WhatdidIRun??</span>
         </div>
         <nav className="flex items-center gap-1 text-sm">
-          {(["search", "stats"] as Tab[]).map((t) => (
+          {TABS.map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -119,18 +139,22 @@ export default function App() {
             </button>
           ))}
           {health && (
-            <span
-              className="ml-3 flex items-center gap-1.5 text-xs text-zinc-500"
-              title={`${health.base_url} · ${health.embed_model}`}
+            <button
+              type="button"
+              onClick={() => setTab("settings")}
+              className="ml-3 flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+              title={`Embeddings: ${health.embed_provider ?? "LM Studio"} · ${health.embed_model}${health.embed_ok ?? health.lmstudio ? "" : " (unreachable)"}\nChat: ${health.chat_provider ?? "LM Studio"}${health.llm_enabled ? "" : " (AI features off)"}`}
             >
-              <span className={`size-2 rounded-full ${health.lmstudio ? "bg-emerald-500" : "bg-red-500"}`} />
-              LM Studio
-            </span>
+              <span className={`size-2 rounded-full ${(health.embed_ok ?? health.lmstudio) ? "bg-emerald-500" : "bg-red-500"}`} />
+              {providerLabel(health)}
+            </button>
           )}
         </nav>
       </header>
 
-      {tab === "stats" ? (
+      {tab === "settings" ? (
+        <Settings onSaved={refreshHealth} />
+      ) : tab === "stats" ? (
         <Stats />
       ) : (
         <main className="space-y-3">
@@ -176,4 +200,10 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function providerLabel(h: Health): string {
+  const embed = (h.embed_provider ?? "LM Studio").replace(/ \(.*\)$/, "");
+  const chat = (h.chat_provider ?? "LM Studio").replace(/ \(.*\)$/, "");
+  return embed === chat || !h.llm_enabled ? embed : `${chat} + ${embed}`;
 }
