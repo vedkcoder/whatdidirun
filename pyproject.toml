@@ -13,6 +13,7 @@ dependencies = [
     "textual>=0.80",
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

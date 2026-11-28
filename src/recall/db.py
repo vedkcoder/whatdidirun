@@ -15,6 +15,17 @@ SCHEMA_VERSION = 1
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
+-- Settings saved from the web UI / `recall config` (env vars still override them; see providers/resolve.py).
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- API keys, AES-GCM encrypted with the master key from keystore.py. `hint` is the last 4 characters.
+CREATE TABLE IF NOT EXISTS secrets (
+    provider   TEXT PRIMARY KEY,
+    nonce      BLOB NOT NULL,
+    ciphertext BLOB NOT NULL,
+    hint       TEXT NOT NULL,
+    updated    REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS cmd_texts (
     text_id    INTEGER PRIMARY KEY,
     text_hash  TEXT NOT NULL UNIQUE,

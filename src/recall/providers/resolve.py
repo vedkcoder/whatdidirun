@@ -10,6 +10,7 @@ Precedence, highest first, for every value:
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -33,7 +34,7 @@ class Value:
 
 
 def _env_name(provider: str, what: str) -> str:
-    return f"RECALL_{provider.upper()}_{what}"
+    return f"RECALL_{re.sub(r'[^A-Za-z0-9]+', '_', provider).upper()}_{what}"
 
 
 def _first(*candidates: tuple[str, str | None]) -> Value:
@@ -49,7 +50,7 @@ def _cfg_value(cfg: Config, settings: SettingsSource | None, attr: str, settings
     if attr in cfg.env_overrides:
         return Value(str(raw), "env")
     saved = settings.get(settings_key or attr) if settings else None
-    if saved is not None and saved != "":
+    if saved is not None and (saved != "" or attr in ("chat_model", "embed_model")):  # "" = auto for models
         return Value(saved, "settings")
     return Value(str(raw), "file" if attr in cfg.file_values else "default")
 
@@ -137,22 +138,28 @@ def _spec(cfg: Config, settings: SettingsSource | None, info: ProviderInfo, mode
     )
 
 
-def chat_spec(cfg: Config, settings: SettingsSource | None = None) -> Spec:
-    """The chat provider spec. `model` may be "" for local providers: the client auto-picks one."""
-    info = get(chat_provider(cfg, settings).value)
-    if not info.chat:
-        raise ProviderError(f"{info.label} doesn't offer chat models")
-    return _spec(cfg, settings, info, setting(cfg, settings, "chat_model").value)
-
-
-def embed_spec(cfg: Config, settings: SettingsSource | None = None) -> Spec:
-    info = get(embed_provider(cfg, settings).value)
+def spec_for(cfg: Config, settings: SettingsSource | None, provider: str, model: str, kind: str) -> Spec:
+    """A spec for a specific provider and model (kind "chat" or "embed"), e.g. for the Settings page's Test button."""
+    info = get(provider)
+    if kind == "chat":
+        if not info.chat:
+            raise ProviderError(f"{info.label} doesn't offer chat models")
+        return _spec(cfg, settings, info, model)
     if not info.embeddings:
         raise ProviderError(f"{info.label} has no embeddings API; choose another embedding provider")
-    model = setting(cfg, settings, "embed_model").value or info.default_embed_model
+    model = model or info.default_embed_model
     if not model:
         raise ProviderError(f"Choose an embedding model for {info.label} (Settings, or RECALL_EMBED_MODEL)")
     return _spec(cfg, settings, info, model)
+
+
+def chat_spec(cfg: Config, settings: SettingsSource | None = None) -> Spec:
+    """The chat provider spec. `model` may be "" for local providers: the client auto-picks one."""
+    return spec_for(cfg, settings, chat_provider(cfg, settings).value, setting(cfg, settings, "chat_model").value, "chat")
+
+
+def embed_spec(cfg: Config, settings: SettingsSource | None = None) -> Spec:
+    return spec_for(cfg, settings, embed_provider(cfg, settings).value, setting(cfg, settings, "embed_model").value, "embed")
 
 
 def embed_id(spec: Spec) -> str:

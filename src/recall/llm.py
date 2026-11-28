@@ -21,7 +21,12 @@ LLMError = ProviderError
 
 class LLMClient:
     def __init__(self, cfg: Config, settings: R.SettingsSource | None = None):
+        """`settings` defaults to the settings saved in this data dir's database (see settings.py)."""
         self.cfg = cfg
+        if settings is None:
+            from .settings import store_for
+
+            settings = store_for(cfg)
         self.settings = settings
 
     # ---- resolution (lazy: a bad provider setting only fails the features that use it) ---------------

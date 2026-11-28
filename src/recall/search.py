@@ -64,16 +64,28 @@ class Searcher:
     def __init__(self, cfg: Config, conn: sqlite3.Connection, settings=None):
         self.cfg = cfg
         self.conn = conn
-        self.settings = settings  # saved settings (providers.resolve.SettingsSource); None = config only
+        self._settings = settings  # providers.resolve.SettingsSource; None = this data dir's saved settings
+        self._rev: str | None = None
         self._lm = None
         self._vi = None
         self._lm_ok: tuple[float, bool] | None = None  # (monotonic time checked, reachable); None = never checked
 
     # ---- lazy providers / Chroma -----------------------------------------------------
     @property
+    def settings(self):
+        if self._settings is None:
+            from .settings import store_for
+            self._settings = store_for(self.cfg)
+        return self._settings
+
+    @property
     def lm(self):
-        if self._lm is None:
+        # Rebuild when settings change, also when another process (CLI, web UI) saved them.
+        rev = self.settings.revision() if hasattr(self.settings, "revision") else None
+        if self._lm is None or rev != self._rev:
             from .llm import LLMClient
+            self.reload()
+            self._rev = rev
             self._lm = LLMClient(self.cfg, self.settings)
         return self._lm
 
