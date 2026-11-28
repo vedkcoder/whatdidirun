@@ -73,7 +73,17 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $env:RECALL_DATA_DIR = Join-Path $env:RUNNER_TEMP 'recall-hook'
+          # Like a real console: PSReadLine is loaded only after the profile, and recall may not be on PATH yet.
+          Remove-Module PSReadLine -ErrorAction SilentlyContinue
+          if (Get-Command recall -ErrorAction SilentlyContinue) { throw 'recall unexpectedly on PATH' }
           . (Resolve-Path dist/WhatDidIRun/_internal/recall/capture/recall.ps1)
+          if ($global:__recall_bin -ne (Resolve-Path dist/WhatDidIRun/recall.exe).ProviderPath) { throw "hook did not find the bundled recall.exe: '$global:__recall_bin'" }
+          if ($global:__recall_key_bound) { throw 'key bound before PSReadLine was loaded?' }
+          Import-Module PSReadLine
+          prompt | Out-Null
+          $h = Get-PSReadLineKeyHandler -Chord Ctrl+g
+          $h
+          if (-not $global:__recall_key_bound -or ($h.Function -ne 'recall')) { throw 'Ctrl+g not bound to recall after the first prompt' }
           $now = Get-Date
           Add-History -InputObject ([pscustomobject]@{ CommandLine = 'git status'; ExecutionStatus = 'Completed'; StartExecutionTime = $now.AddSeconds(-2); EndExecutionTime = $now })
           prompt | Out-Null

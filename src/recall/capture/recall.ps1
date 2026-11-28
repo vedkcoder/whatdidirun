@@ -17,7 +17,17 @@ $global:__recall_spool = Join-Path $global:__recall_data 'spool.jsonl'
 if (-not (Test-Path -LiteralPath $global:__recall_data)) {
     New-Item -ItemType Directory -Force -Path $global:__recall_data | Out-Null
 }
-$global:__recall_bin = (Get-Command recall -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+# Prefer the recall.exe this script ships with (Windows app: <app>\_internal\recall\capture\recall.ps1), so the
+# hook works even when PATH hasn't caught up yet (e.g. Windows Terminal started before the install).
+$global:__recall_bin = $null
+$__recall_bundled = Join-Path $PSScriptRoot '..\..\..\recall.exe'
+if ($global:__recall_windows -and (Test-Path -LiteralPath $__recall_bundled)) {
+    $global:__recall_bin = (Resolve-Path -LiteralPath $__recall_bundled).ProviderPath
+}
+Remove-Variable __recall_bundled
+if (-not $global:__recall_bin) {
+    $global:__recall_bin = (Get-Command recall -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+}
 $global:__recall_shell = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
 $global:__recall_host = [Environment]::MachineName
 $global:__recall_session = "$($global:__recall_host)-$PID-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
@@ -80,6 +90,7 @@ function global:prompt {
     $ok = $?
     $lec = $global:LASTEXITCODE
     try { __recall_record $ok $lec } catch { }
+    if (-not $global:__recall_key_bound) { try { __recall_bind_key } catch { } }
     $global:__recall_cwd = __recall_cwd_now
     $global:LASTEXITCODE = $lec
     if (-not $ok) { Write-Error 'recall' -ErrorAction Ignore }   # give the wrapped prompt the original $? back
@@ -88,7 +99,12 @@ function global:prompt {
 $global:__recall_cwd = __recall_cwd_now
 
 # Ctrl-G: natural-language picker; the chosen command replaces the current line.
-if ($global:__recall_bin -and (Get-Module PSReadLine)) {
+# The console host loads PSReadLine only AFTER the profile has run, so this is retried from the prompt
+# until PSReadLine is there.
+$global:__recall_key_bound = $false
+function global:__recall_bind_key {
+    if ($global:__recall_key_bound -or -not $global:__recall_bin -or -not (Get-Module PSReadLine)) { return }
+    $global:__recall_key_bound = $true
     $chord = if ($env:RECALL_KEY) { $env:RECALL_KEY } else { 'Ctrl+g' }
     Set-PSReadLineKeyHandler -Chord $chord -BriefDescription 'recall' `
         -Description 'Search your command history in plain English (What did I Run ??)' -ScriptBlock {
@@ -110,6 +126,7 @@ if ($global:__recall_bin -and (Get-Module PSReadLine)) {
         }
     }
 }
+__recall_bind_key
 
 # Drain the spool + embed new commands in the background on shell start.
 __recall_ingest_bg
