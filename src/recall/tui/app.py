@@ -139,11 +139,11 @@ class RecallApp(App[str]):
 
     @work(thread=True)
     def _explain(self, cmd: str) -> None:
-        from ..lmstudio import LMStudioError
+        from ..llm import LLMError
 
         try:
             text = self.searcher.explain(cmd)
-        except LMStudioError as e:
+        except LLMError as e:
             text = str(e)
         self.call_from_thread(self.query_one("#explain", Static).update, text)
 

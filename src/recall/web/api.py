@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from ..config import Config
 from ..db import connect
-from ..lmstudio import LMStudioError
+from ..llm import LLMError
 from ..query_parse import Filters
 from ..search import Searcher
 
@@ -78,7 +78,7 @@ def create_app(cfg: Config, background_indexer: bool = True) -> FastAPI:
     def explain(body: ExplainIn):
         try:
             return {"explanation": searcher.explain(body.cmd)}
-        except LMStudioError as e:
+        except LLMError as e:
             raise HTTPException(503, str(e)) from e
 
     @app.get("/api/stats")
@@ -94,7 +94,26 @@ def create_app(cfg: Config, background_indexer: bool = True) -> FastAPI:
 
     @app.get("/api/health")
     def health():
-        return {"lmstudio": searcher.lm_available(ttl=5), "base_url": cfg.base_url, "embed_model": cfg.embed_model, "llm_enabled": cfg.llm_enabled}
+        lm = searcher.lm
+        ok = searcher.lm_available(ttl=5)
+        try:
+            embed_url, embed_model, embed_provider = lm.embed_spec.base_url, lm.embed_spec.model, lm.embed_spec.label
+        except LLMError:
+            embed_url = embed_model = ""
+            embed_provider = "not configured"
+        try:
+            chat_provider = lm.chat_spec.label
+        except LLMError:
+            chat_provider = "not configured"
+        return {
+            "lmstudio": ok,  # 0.1 name: embeddings reachable
+            "embed_ok": ok,
+            "base_url": embed_url,
+            "embed_model": embed_model,
+            "embed_provider": embed_provider,
+            "chat_provider": chat_provider,
+            "llm_enabled": lm.llm_enabled,
+        }
 
     if DIST.exists():
         app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")

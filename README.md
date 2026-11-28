@@ -155,16 +155,53 @@ Docker notes:
 | `recall stats` | Counts, failures, pending work, top programs |
 | `recall doctor` | Diagnose configuration and model-server connectivity |
 
+## Providers
+
+recall uses two kinds of model, and they can come from different providers:
+- a **chat model**, which writes command descriptions, rewrites smart searches and explains commands
+- an **embedding model**, which powers meaning-based search
+
+LM Studio is the default for both, so nothing leaves your machine unless you choose a cloud provider.
+
+| Provider | Id | Chat | Embeddings | API key variable |
+|---|---|---|---|---|
+| LM Studio | `lmstudio` | ✓ | ✓ | not needed |
+| Ollama | `ollama` | ✓ | ✓ | not needed |
+| OpenAI | `openai` | ✓ | ✓ | `OPENAI_API_KEY` |
+| Anthropic (Claude) | `anthropic` | ✓ | | `ANTHROPIC_API_KEY` |
+| Google Gemini | `gemini` | ✓ | ✓ | `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
+| OpenRouter | `openrouter` | ✓ | | `OPENROUTER_API_KEY` |
+| Groq | `groq` | ✓ | | `GROQ_API_KEY` |
+| Mistral | `mistral` | ✓ | ✓ | `MISTRAL_API_KEY` |
+| DeepSeek | `deepseek` | ✓ | | `DEEPSEEK_API_KEY` |
+| xAI (Grok) | `xai` | ✓ | | `XAI_API_KEY` |
+| Together AI | `together` | ✓ | ✓ | `TOGETHER_API_KEY` |
+| Any OpenAI-compatible server | `custom` | ✓ | ✓ | `RECALL_CUSTOM_API_KEY` (optional) |
+
+For example, to use Claude for chat and keep embeddings local in Ollama:
+
+```bash
+export RECALL_CHAT_PROVIDER=anthropic RECALL_CHAT_MODEL=<model id> ANTHROPIC_API_KEY=sk-ant-...
+export RECALL_EMBED_PROVIDER=ollama
+recall doctor      # checks both providers
+recall providers   # lists providers and which keys are set
+```
+
+With a cloud provider, the text of your commands and their descriptions is sent to that provider. recall removes passwords, tokens and keys it recognises before storing a command. Changing the embedding provider or model re-embeds your whole history, which costs money with paid providers.
+
 ## Configuration
 
 Settings come from `~/.config/recall/config.toml` (Windows: `%APPDATA%\recall\config.toml`), or the file named by `RECALL_CONFIG`. Environment variables override that file. Config file keys are the variable names in lower case without the `RECALL_` prefix.
 
 | Variable | Default | |
 |---|---|---|
-| `RECALL_LLM_BASE_URL` | `http://localhost:1234/v1` | OpenAI-compatible server (`/v1` is added if missing) |
-| `RECALL_LLM_API_KEY` | `lm-studio` | Sent as the bearer token |
-| `RECALL_EMBED_MODEL` | `text-embedding-nomic-embed-text-v1.5` | Run `recall reindex` after changing it |
-| `RECALL_CHAT_MODEL` | first non-embedding model loaded | |
+| `RECALL_CHAT_PROVIDER` | `lmstudio` | Provider for descriptions, smart search and explain. See [Providers](#providers). |
+| `RECALL_EMBED_PROVIDER` | `lmstudio` | Provider for embeddings. Changing it re-embeds your whole history. |
+| `RECALL_CHAT_MODEL` | first non-embedding model (local providers) | Required for cloud providers |
+| `RECALL_EMBED_MODEL` | the provider's default embedding model | Changing it re-embeds your whole history |
+| `RECALL_<PROVIDER>_API_KEY` | | API key, e.g. `RECALL_OPENAI_API_KEY`. The provider's usual variable, e.g. `OPENAI_API_KEY`, also works. |
+| `RECALL_<PROVIDER>_BASE_URL` | the provider's API | e.g. `RECALL_OLLAMA_BASE_URL`, or `RECALL_CUSTOM_BASE_URL` for your own OpenAI-compatible server |
+| `RECALL_LLM_BASE_URL` / `RECALL_LLM_API_KEY` | `http://localhost:1234/v1` / `lm-studio` | LM Studio's address and key (from 0.1; the same as `RECALL_LMSTUDIO_*`) |
 | `RECALL_REASONING_EFFORT` | `none` | Stops thinking models from spending most of each call on reasoning. Set it to an empty value to leave the parameter out. |
 | `RECALL_LLM_TIMEOUT` | `60` | Seconds |
 | `RECALL_LLM_ENABLED` | `1` | `0` never calls the chat model (embeddings only) |
@@ -178,9 +215,16 @@ Settings come from `~/.config/recall/config.toml` (Windows: `%APPDATA%\recall\co
 
 ```toml
 # ~/.config/recall/config.toml
-llm_base_url = "http://localhost:1234"
+chat_provider = "anthropic"
+chat_model = "<a model from `recall doctor` or the provider's docs>"
+embed_provider = "ollama"
 ignore_patterns = ['^\s*$', '^(ls|cd|pwd|clear|exit|history)\s*$', '^vault ']
+
+[providers.ollama]
+base_url = "http://gpu-box:11434"
 ```
+
+API keys are best kept out of this file: use the environment variables above.
 
 ## Privacy
 
@@ -192,8 +236,10 @@ ignore_patterns = ['^\s*$', '^(ls|cd|pwd|clear|exit|history)\s*$', '^vault ']
 
 | Symptom | Fix |
 |---|---|
-| `LM Studio unreachable … keyword results only` | Start the server and load both models, then run `recall doctor`. From Docker, enable "Serve on Local Network". |
-| `embed model … ✗ not loaded` | Load the model in LM Studio or set `RECALL_EMBED_MODEL` to one that is loaded |
+| `… unreachable; keyword results only` | Start the embedding provider (for LM Studio, load both models), then run `recall doctor`. From Docker, enable "Serve on Local Network" in LM Studio. |
+| `embed model ? not listed` | Load the model in LM Studio or Ollama, or set `RECALL_EMBED_MODEL` to one the provider offers |
+| `No API key for …` / `… rejected the API key` | Set the provider's key variable (see [Providers](#providers)); `recall providers` shows which keys are set |
+| `Choose a chat model for …` | Cloud providers need `RECALL_CHAT_MODEL`; their docs or `/models` endpoint list the ids |
 | Each chat call takes about 50 s | Your model is a thinking model; keep `RECALL_REASONING_EFFORT=none` |
 | New commands don't show up | Run `recall ingest`, or wait. The shell hook ingests every 25 commands, and the web UI ingests every minute. |
 | `shell hook: no commands captured yet` | bash: make sure the `source …/recall.bash` line is in `~/.bashrc`. PowerShell: run `recall init powershell --install`. Then open a new shell. |
@@ -224,7 +270,8 @@ src/recall/
   query_parse.py  time / status / repo extraction from queries
   redact.py     secret masking
   vectors.py    ChromaDB index
-  lmstudio.py   OpenAI-compatible client
+  llm.py        chat + embedding client used everywhere
+    providers/    adapters (OpenAI-compatible, Anthropic, Gemini) and the provider catalog
   tui/          Textual picker
   web/          FastAPI backend (serves the built UI from web/dist)
 web/            React + Vite + Tailwind frontend

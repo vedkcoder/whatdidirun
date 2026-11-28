@@ -1,4 +1,4 @@
-"""ChromaDB vector index over unique command texts, embedded via LM Studio."""
+"""ChromaDB vector index over unique command texts, embedded by the configured embedding provider."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import threading
 
 from .config import Config
 from .db import get_meta, set_meta
-from .lmstudio import LMStudio
+from .llm import LLMClient
 
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 logging.getLogger("chromadb").setLevel(logging.ERROR)
@@ -39,22 +39,37 @@ def _client(path: str):
 
 
 class VectorIndex:
-    def __init__(self, cfg: Config, lm: LMStudio):
+    def __init__(self, cfg: Config, lm: LLMClient):
         self.cfg = cfg
         self.lm = lm
+        # "<provider>:<model>" (bare model name for LM Studio, so 0.1 indexes are reused).
+        self.embed_id = lm.embed_id
         self.client = _client(str(cfg.chroma_path))
         self.collection = self.client.get_or_create_collection(
-            _collection_name(cfg.embed_model), metadata={"hnsw:space": "cosine"}, embedding_function=None
+            _collection_name(self.embed_id), metadata={"hnsw:space": "cosine"}, embedding_function=None
         )
 
     def sync_model(self, conn: sqlite3.Connection) -> bool:
-        """If the embedding model changed since last run, mark everything for re-embedding."""
-        if get_meta(conn, "embed_model") != self.cfg.embed_model:
+        """If the embedding provider/model changed since last run, mark everything for re-embedding."""
+        if get_meta(conn, "embed_model") != self.embed_id:
             conn.execute("UPDATE cmd_texts SET embedded = 0")
-            set_meta(conn, "embed_model", self.cfg.embed_model)
+            set_meta(conn, "embed_model", self.embed_id)
+            set_meta(conn, "embed_dims", "")
             conn.commit()
             return True
         return False
+
+    def _check_dims(self, conn: sqlite3.Connection, vectors: list[list[float]]) -> None:
+        """Same model name, different vector size (e.g. a server swapped the model): start the index over."""
+        if not vectors:
+            return
+        dims = str(len(vectors[0]))
+        known = get_meta(conn, "embed_dims")
+        if known and known != dims:
+            self.reset(conn)
+        if known != dims:
+            set_meta(conn, "embed_dims", dims)
+            conn.commit()
 
     def embed_pending(self, conn: sqlite3.Connection, batch_size: int = 256) -> int:
         self.sync_model(conn)
@@ -63,6 +78,8 @@ class VectorIndex:
             "SELECT text_id, embed_text, git_repo FROM cmd_texts WHERE embedded = 0 LIMIT ?", (batch_size,)
         ).fetchall():
             vectors = self.lm.embed([r["embed_text"] for r in rows], kind="document")
+            if get_meta(conn, "embed_dims") != (str(len(vectors[0])) if vectors else None):
+                self._check_dims(conn, vectors)
             self.collection.upsert(
                 ids=[str(r["text_id"]) for r in rows],
                 embeddings=vectors,

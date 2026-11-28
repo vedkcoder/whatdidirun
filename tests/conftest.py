@@ -9,7 +9,7 @@ from recall.db import connect
 
 
 def fake_embed(self, texts, kind="document", batch_size=64):
-    """Deterministic bag-of-words embedding with a few synonyms, standing in for LM Studio."""
+    """Deterministic bag-of-words embedding with a few synonyms, standing in for an embedding provider."""
     synonyms = {"sort": "order", "sorted": "order", "size": "big", "largest": "big", "biggest": "big",
                 "du": "big", "files": "file", "file": "file", "lss": "big"}
     out = []
@@ -37,10 +37,10 @@ def conn(cfg):
 
 @pytest.fixture
 def fake_lm(monkeypatch):
-    from recall.lmstudio import LMStudio
+    from recall.llm import LLMClient
 
-    monkeypatch.setattr(LMStudio, "embed", fake_embed)
-    monkeypatch.setattr(LMStudio, "available", lambda self: True)
+    monkeypatch.setattr(LLMClient, "embed", fake_embed)
+    monkeypatch.setattr(LLMClient, "available", lambda self: True)
 
 
 DESCRIPTIONS = {
@@ -61,6 +61,7 @@ def fake_chat_json(self, system, user, max_tokens=800):
 
 @pytest.fixture
 def fake_llm(monkeypatch, fake_lm):
-    from recall.lmstudio import LMStudio
+    from recall.llm import LLMClient
 
-    monkeypatch.setattr(LMStudio, "chat_json", fake_chat_json)
+    monkeypatch.setattr(LLMClient, "chat_json", fake_chat_json)
+    monkeypatch.setattr(LLMClient, "chat_available", lambda self: True)

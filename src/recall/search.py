@@ -61,20 +61,27 @@ def boost(score: float, last_ts: float | None, runs: int, now: float) -> float:
 
 
 class Searcher:
-    def __init__(self, cfg: Config, conn: sqlite3.Connection):
+    def __init__(self, cfg: Config, conn: sqlite3.Connection, settings=None):
         self.cfg = cfg
         self.conn = conn
+        self.settings = settings  # saved settings (providers.resolve.SettingsSource); None = config only
         self._lm = None
         self._vi = None
         self._lm_ok: tuple[float, bool] | None = None  # (monotonic time checked, reachable); None = never checked
 
-    # ---- lazy LM Studio / Chroma ---------------------------------------------------
+    # ---- lazy providers / Chroma -----------------------------------------------------
     @property
     def lm(self):
         if self._lm is None:
-            from .lmstudio import LMStudio
-            self._lm = LMStudio(self.cfg)
+            from .llm import LLMClient
+            self._lm = LLMClient(self.cfg, self.settings)
         return self._lm
+
+    def reload(self) -> None:
+        """Pick up changed provider settings (e.g. saved from the web UI) without a restart."""
+        self._lm = None
+        self._vi = None
+        self._lm_ok = None
 
     @property
     def vectors(self):
@@ -210,13 +217,13 @@ class Searcher:
         if not use_vectors:
             pass  # caller will re-query once the vector index has loaded
         elif self.lm_available():
-            from .lmstudio import LMStudioError
+            from .llm import LLMError
             try:
                 rankings["vector"] = self.vector(text, pool)
-            except LMStudioError as e:
+            except LLMError as e:
                 warnings.append(f"semantic search unavailable ({e}); keyword results only")
         else:
-            warnings.append(f"LM Studio unreachable at {self.cfg.base_url}; keyword results only")
+            warnings.append(f"{self.lm.describe_embedder()} unreachable; keyword results only")
         if allowed is not None:
             rankings = {k: [i for i in v if i in allowed] for k, v in rankings.items()}
 
@@ -235,7 +242,7 @@ class Searcher:
 
     # ---- LLM helpers ------------------------------------------------------------------------
     def _expand(self, text: str, words: list[str], warnings: list[str]):
-        from .lmstudio import LMStudioError
+        from .llm import LLMError
         try:
             data = self.lm.chat_json(
                 "You turn a natural-language description of a shell command into search keywords. "
@@ -246,12 +253,12 @@ class Searcher:
             extra = [w for k in data.get("keywords", []) for w in keywords(str(k))]
             words = list(dict.fromkeys(words + extra))
             text = f"{text} {data.get('rewrite', '')}".strip()
-        except LMStudioError as e:
+        except LLMError as e:
             warnings.append(f"query expansion skipped: {e}")
         return words, text, warnings
 
     def _rerank(self, query: str, results: list[Result], warnings: list[str]):
-        from .lmstudio import LMStudioError
+        from .llm import LLMError
         listing = "\n".join(f"{i}: {r.cmd}" for i, r in enumerate(results))
         try:
             data = self.lm.chat_json(
@@ -268,7 +275,7 @@ class Searcher:
                     r.sources = [*r.sources, "llm"]
                 rest = [r for i, r in enumerate(results) if i not in set(order)]
                 return picked + rest, warnings
-        except LMStudioError as e:
+        except LLMError as e:
             warnings.append(f"rerank skipped: {e}")
         return results, warnings
 

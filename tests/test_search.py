@@ -110,23 +110,64 @@ def test_web_api(cfg, conn, fake_llm):
 
 
 def test_describe_failure_marks_and_continues(cfg, conn, fake_lm, monkeypatch):
-    from recall.lmstudio import LMStudio, LMStudioError
+    from recall.llm import LLMClient, LLMError
 
     def bad(self, system, user, max_tokens=800):
-        raise LMStudioError("nope")
+        raise LLMError("nope")
 
-    monkeypatch.setattr(LMStudio, "chat_json", bad)
+    monkeypatch.setattr(LLMClient, "chat_json", bad)
+    monkeypatch.setattr(LLMClient, "chat_available", lambda self: True)  # reachable, but every answer fails
     write_spool(cfg, [rec("echo one"), rec("echo two"), rec("echo three")])
     res = ingest(cfg, conn)
     assert res.described == 0 and res.embedded == 3  # still embedded without descriptions
     assert {r[0] for r in conn.execute("SELECT described FROM cmd_texts")} == {-1}
 
 
+def test_unreachable_chat_provider_leaves_descriptions_pending(cfg, conn, fake_lm):
+    """Chat down (but embeddings fine): commands are embedded and wait for a description, not given up on."""
+    write_spool(cfg, [rec("echo one"), rec("echo two")])
+    res = ingest(cfg, conn)
+    assert res.described == 0 and res.embedded == 2
+    assert {r[0] for r in conn.execute("SELECT described FROM cmd_texts")} == {0}
+    assert any("unreachable" in w and "await a description" in w for w in res.warnings)
+
+
 def test_lm_check_runs_on_first_use_right_after_boot(cfg, conn, monkeypatch):
     """monotonic() is time since boot; the first availability check must not be skipped on a fresh machine."""
     from recall import search as search_mod
-    from recall.lmstudio import LMStudio
+    from recall.llm import LLMClient
 
     monkeypatch.setattr(search_mod.time, "monotonic", lambda: 5.0)  # booted 5 s ago
-    monkeypatch.setattr(LMStudio, "available", lambda self: True)
+    monkeypatch.setattr(LLMClient, "available", lambda self: True)
     assert Searcher(cfg, conn).lm_available()
+
+
+def test_embedding_size_change_rebuilds_index(cfg, conn, fake_lm, monkeypatch):
+    """Same model name but a different vector size (server swapped the model): start the index over."""
+    from recall.db import get_meta
+    from recall.llm import LLMClient
+
+    write_spool(cfg, [rec("echo one"), rec("echo two")])
+    assert ingest(cfg, conn, describe=False).embedded == 2
+    assert get_meta(conn, "embed_dims") == "64"
+
+    monkeypatch.setattr(LLMClient, "embed", lambda self, texts, kind="document": [[1.0] * 8 for _ in texts])
+    write_spool(cfg, [rec("echo three")])
+    res = ingest(cfg, conn, describe=False)
+    assert get_meta(conn, "embed_dims") == "8"
+    assert res.embedded == 3  # everything re-embedded into the rebuilt collection
+    assert conn.execute("SELECT count(*) FROM cmd_texts WHERE embedded = 0").fetchone()[0] == 0
+
+
+def test_switching_embed_provider_reembeds(cfg, conn, fake_lm, monkeypatch):
+    from recall.db import get_meta
+
+    write_spool(cfg, [rec("echo one")])
+    ingest(cfg, conn, describe=False)
+    monkeypatch.setenv("RECALL_EMBED_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    cfg.env_overrides.add("embed_provider")
+    cfg.embed_provider = "openai"
+    cfg.embed_model = ""
+    res = ingest(cfg, conn, describe=False)
+    assert res.embedded == 1 and get_meta(conn, "embed_model") == "openai:text-embedding-3-small"
