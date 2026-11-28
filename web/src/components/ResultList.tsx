@@ -18,7 +18,10 @@ const SOURCE_STYLE: Record<string, string> = {
 
 export function ResultList({ results, selected, onSelect, onOpen, onCopy }: Props) {
   const refs = useRef<(HTMLLIElement | null)[]>([]);
-  useEffect(() => refs.current[selected]?.scrollIntoView({ block: "nearest" }), [selected]);
+  // Braces matter: newer browsers return a Promise from scrollIntoView, and React would call it as a cleanup.
+  useEffect(() => {
+    refs.current[selected]?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
 
   return (
     <ul className="divide-y divide-zinc-200 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
