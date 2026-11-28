@@ -65,7 +65,7 @@ def init(
 @app.command()
 def ingest(
     quiet: Annotated[bool, typer.Option("--quiet", "-q")] = False,
-    embed: Annotated[bool, typer.Option(help="Embed new commands via LM Studio")] = True,
+    embed: Annotated[bool, typer.Option(help="Embed new commands with the embedding provider")] = True,
     describe: Annotated[Optional[bool], typer.Option(help="Describe new commands with the chat model (default: config)")] = None,
     wait: Annotated[bool, typer.Option(help="Wait if another ingest is running")] = True,
 ) -> None:
@@ -84,7 +84,7 @@ def ingest(
 def import_(
     path: Annotated[Optional[Path], typer.Argument(help="History file (default: ~/.bash_history, or PSReadLine history on Windows)")] = None,
     fmt: Annotated[str, typer.Option("--format", help="auto, bash or psreadline")] = "auto",
-    embed: Annotated[bool, typer.Option(help="Describe + embed imported commands via LM Studio")] = True,
+    embed: Annotated[bool, typer.Option(help="Describe + embed imported commands with the configured providers")] = True,
 ) -> None:
     """Import an existing bash or PowerShell (PSReadLine) history file (idempotent)."""
     from .config import IS_WINDOWS
@@ -114,7 +114,7 @@ def import_(
 def search(
     query: Annotated[list[str], typer.Argument(help="What you're looking for, in plain words")],
     limit: Annotated[int, typer.Option("--limit", "-n")] = 10,
-    smart: Annotated[bool, typer.Option("--smart", "-s", help="Use the LM Studio chat model to expand + rerank")] = False,
+    smart: Annotated[bool, typer.Option("--smart", "-s", help="Use the chat model to expand + rerank")] = False,
     failed: Annotated[Optional[bool], typer.Option("--failed/--succeeded", help="Filter by exit status")] = None,
     repo: Annotated[Optional[str], typer.Option(help="Only commands run in this git repo")] = None,
     as_json: Annotated[bool, typer.Option("--json")] = False,
@@ -146,14 +146,14 @@ def search(
 
 @app.command()
 def explain(command: Annotated[list[str], typer.Argument()]) -> None:
-    """Explain a command using the LM Studio chat model."""
-    from .lmstudio import LMStudioError
+    """Explain a command using the configured chat model."""
+    from .llm import LLMError
     from .search import Searcher
 
     cfg, conn = _ctx()
     try:
         typer.echo(Searcher(cfg, conn).explain(" ".join(command)))
-    except LMStudioError as e:
+    except LLMError as e:
         _err(str(e))
         raise typer.Exit(1)
 
@@ -213,16 +213,20 @@ def tray() -> None:
 
 @app.command()
 def reindex() -> None:
-    """Drop the vector index and re-embed everything (e.g. after changing RECALL_EMBED_MODEL)."""
-    from .lmstudio import LMStudio
+    """Drop the vector index and re-embed everything with the current embedding provider and model."""
+    from .llm import LLMClient, LLMError
     from .vectors import VectorIndex
 
     cfg, conn = _ctx()
-    lm = LMStudio(cfg)
-    vi = VectorIndex(cfg, lm)
-    vi.reset(conn)
-    n = vi.embed_pending(conn)
-    typer.echo(f"re-embedded {n} commands with {cfg.embed_model}")
+    lm = LLMClient(cfg)
+    try:
+        vi = VectorIndex(cfg, lm)
+        vi.reset(conn)
+        n = vi.embed_pending(conn)
+    except LLMError as e:
+        _err(str(e))
+        raise typer.Exit(1)
+    typer.echo(f"re-embedded {n} commands with {lm.embed_spec.label} · {lm.embed_model}")
 
 
 @app.command()
@@ -238,29 +242,68 @@ def stats() -> None:
 
 
 @app.command()
+def providers() -> None:
+    """List the chat and embedding providers recall supports, and which ones are active."""
+    from .providers import CATALOG
+    from .providers import resolve as R
+
+    cfg, _ = _ctx()
+    chat, emb = R.chat_provider(cfg).value, R.embed_provider(cfg).value
+    typer.echo(f"{'provider':<12} {'name':<28} {'chat':<6} {'embed':<6} key")
+    for p in CATALOG.values():
+        key = R.api_key(cfg, p.id)
+        if not p.needs_key:
+            key_state = "not needed"
+        elif key.value:
+            key_state = f"set ({key.source})"
+        else:
+            key_state = typer.style("missing", fg="yellow") + (f" — {p.key_env[0]} or {p.key_url}" if p.key_env else "")
+        mark = lambda on, active: (typer.style("active", fg="green") if active else "yes") if on else "-"  # noqa: E731
+        typer.echo(f"{p.id:<12} {p.label:<28} {mark(p.chat, p.id == chat):<6} {mark(p.embeddings, p.id == emb):<6} {key_state}")
+    typer.echo("\nChoose with RECALL_CHAT_PROVIDER / RECALL_EMBED_PROVIDER (or chat_provider / embed_provider in config.toml).")
+
+
+@app.command()
 def doctor() -> None:
-    """Check configuration and LM Studio connectivity."""
-    from .lmstudio import LMStudio, LMStudioError
+    """Check configuration and connectivity of the chat and embedding providers."""
+    import time as _t
+
+    from .llm import LLMClient, LLMError
+    from .providers import AuthError, UnavailableError
 
     cfg, conn = _ctx()
     typer.echo(f"data dir     {cfg.data_dir}")
-    typer.echo(f"LM Studio    {cfg.base_url}")
-    lm = LMStudio(cfg)
+    lm = LLMClient(cfg)
+
     try:
-        models = lm.models()
-        typer.echo(f"models       {', '.join(models)}")
-        ok = cfg.embed_model in models
-        typer.secho(f"embed model  {cfg.embed_model} {'✓' if ok else '✗ not loaded'}", fg=None if ok else "red")
+        es = lm.embed_spec
+        typer.echo(f"embeddings   {es.label} · {es.base_url} · {es.model}")
+        try:
+            models = lm.embed_models()
+            if es.model in models:
+                typer.echo("embed model  ✓ available")
+            else:
+                typer.secho(f"embed model  ? not listed by {es.label} ({len(models)} models listed)", fg="yellow")
+        except (AuthError, UnavailableError):
+            raise
+        except LLMError as e:  # some servers have no /models endpoint; the embed below is the real test
+            typer.secho(f"embed models {e}", fg="yellow")
         dim = len(lm.embed(["test"])[0])
         typer.echo(f"embed dim    {dim}")
-        typer.echo(f"chat model   {lm.chat_model}{'' if cfg.llm_enabled else ' (disabled)'}")
-        if cfg.llm_enabled:
-            import time as _t
+    except LLMError as e:
+        typer.secho(f"embeddings   {e}", fg="red")
+
+    try:
+        cs = lm.chat_spec
+        typer.echo(f"chat         {cs.label} · {cs.base_url}")
+        typer.echo(f"chat model   {lm.chat_model}{'' if lm.llm_enabled else ' (AI features off)'}")
+        if lm.llm_enabled:
             t0 = _t.monotonic()
             reply = lm.chat("Reply with exactly: ok", "ping", max_tokens=50)
-            typer.echo(f"chat check   {reply[:20]!r} in {_t.monotonic() - t0:.1f}s (reasoning_effort={cfg.reasoning_effort or 'omitted'})")
-    except LMStudioError as e:
-        typer.secho(str(e), fg="red")
+            effort = cs.reasoning_effort or "omitted"
+            typer.echo(f"chat check   {reply[:20]!r} in {_t.monotonic() - t0:.1f}s (reasoning_effort={effort})")
+    except LLMError as e:
+        typer.secho(f"chat         {e}", fg="red")
     hook = cfg.spool_path.exists() or conn.execute("SELECT 1 FROM commands WHERE source='hook' LIMIT 1").fetchone()
     from .config import IS_WINDOWS
 

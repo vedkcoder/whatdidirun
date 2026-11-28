@@ -175,7 +175,12 @@ def ingest(
     Everything runs under one file lock so concurrent shells / the web server never double-process.
     """
     res = IngestResult()
-    describe = cfg.describe and cfg.llm_enabled if describe is None else describe
+    if describe is None:
+        from .config import _to_bool
+        from .providers import resolve as R
+
+        settings = getattr(lm, "settings", None)
+        describe = _to_bool(R.setting(cfg, settings, "describe").value) and _to_bool(R.setting(cfg, settings, "llm_enabled").value)
     with _lock(cfg.data_dir / "ingest.lock", blocking=wait) as got:
         if not got:
             res.warnings.append("another ingest is running")
@@ -189,30 +194,41 @@ def ingest(
 
 def enrich_and_embed(cfg: Config, conn: sqlite3.Connection, embed: bool = True, describe: bool = True, lm=None, vi=None) -> tuple[int, int, list[str]]:
     from .enrich import describe_pending
-    from .lmstudio import LMStudio, LMStudioError
+    from .llm import LLMClient, LLMError
     from .vectors import VectorIndex
 
-    lm = lm or LMStudio(cfg)
+    lm = lm or LLMClient(cfg)
     warnings: list[str] = []
     pending = lambda col: conn.execute(f"SELECT count(*) FROM cmd_texts WHERE {col} = 0").fetchone()[0]  # noqa: E731
-    vi = (vi or VectorIndex(cfg, lm)) if embed else None
-    if vi:
+    if embed and vi is None:
+        try:
+            vi = VectorIndex(cfg, lm)
+        except LLMError as e:  # e.g. an embedding provider without an embeddings API
+            warnings.append(str(e))
+            embed = False
+    if embed:
         vi.sync_model(conn)
-    if not (describe and pending("described")) and not (embed and pending("embedded")):
+    describe = describe and bool(pending("described"))
+    embed = embed and bool(pending("embedded")) or (embed and describe)
+    if not describe and not embed:
         return 0, 0, warnings
-    if not lm.available():
-        return 0, 0, [f"LM Studio unreachable at {cfg.base_url}; {pending('embedded')} commands await embedding"]
     described = embedded = 0
     if describe:
-        try:
-            described = describe_pending(conn, lm)
-        except LMStudioError as e:
-            warnings.append(f"describing commands failed: {e}")
-    if vi:
-        try:
-            embedded = vi.embed_pending(conn)
-        except LMStudioError as e:
-            warnings.append(str(e))
+        if lm.chat_available():
+            try:
+                described = describe_pending(conn, lm)
+            except LLMError as e:
+                warnings.append(f"describing commands failed: {e}")
+        else:
+            warnings.append(f"{lm.describe_chat()} unreachable; {pending('described')} commands await a description")
+    if embed:
+        if not lm.available():
+            warnings.append(f"{lm.describe_embedder()} unreachable; {pending('embedded')} commands await embedding")
+        else:
+            try:
+                embedded = vi.embed_pending(conn)
+            except LLMError as e:
+                warnings.append(str(e))
     return described, embedded, warnings
 
 
