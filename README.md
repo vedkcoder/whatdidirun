@@ -241,7 +241,7 @@ Releases are automated by [`.github/workflows/release.yml`](.github/workflows/re
 uv lock
 git commit -am "Release 0.2.0"
 # 2. tag and push. The tag must match the pyproject version.
-git tag -a v0.2.0 -m "WhatdidIRun?? 0.2.0"
+git tag -a v0.2.0 -m "v0.2.0"
 git push origin main v0.2.0
 ```
 
