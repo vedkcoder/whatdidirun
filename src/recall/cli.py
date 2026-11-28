@@ -159,13 +159,21 @@ def explain(command: Annotated[list[str], typer.Argument()]) -> None:
 
 
 @app.command()
-def tui(query: Annotated[str, typer.Option("--query", "-q")] = "") -> None:
-    """Interactive picker. Prints the chosen command on stdout (used by the Ctrl-G binding)."""
+def tui(
+    query: Annotated[str, typer.Option("--query", "-q", envvar="RECALL_TUI_QUERY", show_envvar=False)] = "",
+    out: Annotated[Optional[Path], typer.Option("--out", help="Write the chosen command to this file instead of stdout")] = None,
+) -> None:
+    """Interactive picker. Prints the chosen command on stdout, or writes it to --out (used by the Ctrl-G binding).
+
+    On Windows the picker draws on stdout, so the PowerShell binding can't capture stdout and uses --out instead.
+    """
     from .tui.app import run
 
     cfg, conn = _ctx()
     chosen = run(cfg, conn, query)
-    if chosen:
+    if out is not None:
+        out.write_text(chosen or "", encoding="utf-8")
+    elif chosen:
         sys.stdout.write(chosen)
         sys.stdout.flush()
 

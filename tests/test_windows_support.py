@@ -110,3 +110,29 @@ def test_cli_init_powershell_prints_dot_source_line():
 
 def test_cli_init_rejects_unknown_shell():
     assert CliRunner().invoke(app, ["init", "fish"]).exit_code != 0
+
+
+def test_cli_tui_writes_choice_to_out_file(monkeypatch, tmp_path):
+    """The PowerShell Ctrl-G binding can't capture stdout on Windows (the picker draws there): it uses --out."""
+    seen = {}
+
+    def fake_run(cfg, conn, query):
+        seen["query"] = query
+        return "git log --oneline"
+
+    monkeypatch.setattr("recall.tui.app.run", fake_run)
+    monkeypatch.setenv("RECALL_TUI_QUERY", "show recent commits")
+    out = tmp_path / "choice.txt"
+    res = CliRunner().invoke(app, ["tui", "--out", str(out)])
+    assert res.exit_code == 0, res.output
+    assert seen["query"] == "show recent commits"
+    assert out.read_text(encoding="utf-8") == "git log --oneline"
+    assert res.output == ""
+
+
+def test_cli_tui_cancel_leaves_out_file_empty(monkeypatch, tmp_path):
+    monkeypatch.setattr("recall.tui.app.run", lambda cfg, conn, query: None)
+    out = tmp_path / "choice.txt"
+    out.write_text("stale", encoding="utf-8")
+    assert CliRunner().invoke(app, ["tui", "--out", str(out)]).exit_code == 0
+    assert out.read_text(encoding="utf-8") == ""
