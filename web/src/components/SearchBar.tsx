@@ -32,7 +32,7 @@ export const SearchBar = forwardRef<HTMLInputElement, Props>(function SearchBar(
         type="button"
         disabled={!llmEnabled}
         onClick={() => onSmartChange(!smart)}
-        title="Use the LM Studio chat model to expand the query and rerank results (slower)"
+        title={llmEnabled ? "Use the chat model to expand the query and rerank results (slower)" : "Turn on AI features in Settings to use smart search"}
         className={`rounded-lg px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 ${
           smart
             ? "bg-violet-600 text-white"

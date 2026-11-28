@@ -12,11 +12,11 @@ $ recall search "how much free disk space"
       2h ago · ~ · 41×
 ```
 
-What did I Run ?? records every command you run in bash or PowerShell, along with its working directory, exit code, duration, git repo and branch. It asks a local LLM to write a one-line description of each command, then indexes everything for both keyword and semantic search. You can find commands from the CLI, from an inline picker (**Ctrl-G**), or from a web UI.
+What did I Run ?? records every command you run in bash or PowerShell, along with its working directory, exit code, duration, git repo and branch. It asks an LLM, local by default, to write a one-line description of each command, then indexes everything for both keyword and semantic search. You can find commands from the CLI, from an inline picker (**Ctrl-G**), or from a web UI.
 
 The package is called `whatdidirun`; the command you type is `recall`.
 
-Everything stays on your machine. Commands are stored in SQLite, keyword search uses SQLite FTS5 (BM25), vectors are stored in ChromaDB, and embeddings and descriptions come from your own [LM Studio](https://lmstudio.ai) server or any other OpenAI-compatible server.
+By default everything stays on your machine. Commands are stored in SQLite, keyword search uses SQLite FTS5 (BM25), and vectors are stored in ChromaDB. Embeddings and descriptions come from your own [LM Studio](https://lmstudio.ai) or Ollama server, or from a cloud provider you choose (see [Providers](#providers)).
 
 ## Features
 
@@ -28,6 +28,7 @@ Everything stays on your machine. Commands are stored in SQLite, keyword search 
 - **Secret redaction:** API keys, tokens, `--password` values, URL credentials and auth headers are masked before anything is stored or sent to a model.
 - **Fast capture:** the bash hook is pure bash and takes under 1 ms per prompt; the PowerShell hook wraps your prompt. Commands typed with a **leading space** are never recorded.
 - **Windows app:** a one-click installer with a tray icon, PowerShell integration and Ctrl-G.
+- **Your choice of AI provider:** local LM Studio or Ollama, or OpenAI, Anthropic (Claude), Gemini, OpenRouter, Groq, Mistral, DeepSeek, xAI, Together, or any OpenAI-compatible server. Chat and embeddings can use different providers. You manage providers, models and encrypted API keys on the Settings page.
 - **Works without the LLM:** if the model server is down, capture and keyword search keep working. Commands that missed description or embedding are filled in on the next ingest.
 
 ## How it works
@@ -63,15 +64,17 @@ Capture uses a vendored copy of [bash-preexec](https://github.com/rcaloras/bash-
 2. Keep both options ticked:
    - **Record commands in PowerShell and bind Ctrl-G**, which adds a marked block to your PowerShell profile(s)
    - **Start in the system tray when I sign in**
-3. Install [LM Studio](https://lmstudio.ai), load an embedding model and a small chat model, and start its server.
+3. Choose where the AI comes from: right-click the tray icon, then **Settings…**.
+   - **Local (default):** install [LM Studio](https://lmstudio.ai) or [Ollama](https://ollama.com), load an embedding model and a small chat model, and start its server.
+   - **Cloud:** pick a provider such as OpenAI, Anthropic, Gemini, OpenRouter or Groq, paste its API key and press **Test**. Claude and Groq have no embeddings, so pair them with an embedding provider such as OpenAI, Gemini, Mistral or a local one.
 4. Open a **new** PowerShell window and check the setup:
 
 ```powershell
-recall doctor                       # checks LM Studio, the models and the shell hook
+recall doctor                       # checks both providers, the models and the shell hook
 recall import                       # optional: backfill your PSReadLine history
 ```
 
-The tray icon (**What did I Run ??**) runs the web UI at http://127.0.0.1:8765 and indexes new commands every minute. Right-click it for **Open**, **Index now**, **Start at login** and **Quit**. In PowerShell, press **Ctrl-G** to search; the chosen command lands on your prompt.
+The tray icon (**What did I Run ??**) runs the web UI at http://127.0.0.1:8765 and indexes new commands every minute. Right-click it for **Open**, **Settings…**, **Index now**, **Start at login** and **Quit**. In PowerShell, press **Ctrl-G** to search; the chosen command lands on your prompt.
 
 On Windows, data lives in `%LOCALAPPDATA%\recall` and the config file is `%APPDATA%\recall\config.toml`. Uninstalling (Settings → Apps) removes the app, the PATH entry, the profile block and the login item, but keeps your data. If you use a prompt theme like oh-my-posh or starship, make sure it is set up *before* the recall block in your profile; the installer appends the block at the end.
 
@@ -187,7 +190,7 @@ recall doctor      # checks both providers
 recall providers   # lists providers and which keys are set
 ```
 
-You can also save these choices instead of exporting variables. The web UI's Settings page and these commands change the same saved settings:
+You can also save these choices instead of exporting variables. Open **Settings** in the web UI (the tray menu has a shortcut) to pick providers and models, test them and manage API keys and custom endpoints. These commands change the same saved settings:
 
 ```bash
 recall config set chat_provider anthropic
