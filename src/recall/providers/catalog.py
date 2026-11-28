@@ -88,9 +88,33 @@ CATALOG: dict[str, ProviderInfo] = {
 }
 
 
+# Custom OpenAI-compatible endpoints the user added in Settings (id -> info). Filled by settings.SettingsStore.
+CUSTOM: dict[str, ProviderInfo] = {}
+
+
+def custom_info(provider_id: str, label: str, base_url: str, embeddings: bool = True) -> ProviderInfo:
+    return ProviderInfo(
+        provider_id, label, "openai", base_url, embeddings=embeddings, needs_key=False, send_reasoning_effort=True,
+    )
+
+
+def set_custom(entries: list[dict]) -> None:
+    CUSTOM.clear()
+    for e in entries:
+        try:
+            CUSTOM[e["id"]] = custom_info(e["id"], e.get("label") or e["id"], e.get("base_url", ""), bool(e.get("embeddings", True)))
+        except (KeyError, TypeError):
+            continue
+
+
+def all_providers() -> list[ProviderInfo]:
+    return [*CATALOG.values(), *CUSTOM.values()]
+
+
 def get(provider_id: str) -> ProviderInfo:
-    try:
+    if provider_id in CATALOG:
         return CATALOG[provider_id]
-    except KeyError:
-        known = ", ".join(CATALOG)
-        raise ValueError(f"Unknown provider {provider_id!r}. Known providers: {known}") from None
+    if provider_id in CUSTOM:
+        return CUSTOM[provider_id]
+    known = ", ".join([*CATALOG, *CUSTOM])
+    raise ValueError(f"Unknown provider {provider_id!r}. Known providers: {known}")

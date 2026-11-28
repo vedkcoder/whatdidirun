@@ -190,7 +190,7 @@ def web(
     from .web.api import create_app
 
     cfg, _ = _ctx()
-    host = host or cfg.web_host
+    host = cfg.web_host = host or cfg.web_host  # the settings API needs to know if it's reachable from the network
     port = port or cfg.web_port
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}"
     typer.echo(f"recall web UI → {url}")
@@ -244,14 +244,16 @@ def stats() -> None:
 @app.command()
 def providers() -> None:
     """List the chat and embedding providers recall supports, and which ones are active."""
-    from .providers import CATALOG
     from .providers import resolve as R
+    from .providers.catalog import all_providers
+    from .settings import store_for
 
     cfg, _ = _ctx()
-    chat, emb = R.chat_provider(cfg).value, R.embed_provider(cfg).value
+    st = store_for(cfg)
+    chat, emb = R.chat_provider(cfg, st).value, R.embed_provider(cfg, st).value
     typer.echo(f"{'provider':<12} {'name':<28} {'chat':<6} {'embed':<6} key")
-    for p in CATALOG.values():
-        key = R.api_key(cfg, p.id)
+    for p in all_providers():
+        key = R.api_key(cfg, p.id, st)
         if not p.needs_key:
             key_state = "not needed"
         elif key.value:
@@ -260,7 +262,90 @@ def providers() -> None:
             key_state = typer.style("missing", fg="yellow") + (f" — {p.key_env[0]} or {p.key_url}" if p.key_env else "")
         mark = lambda on, active: (typer.style("active", fg="green") if active else "yes") if on else "-"  # noqa: E731
         typer.echo(f"{p.id:<12} {p.label:<28} {mark(p.chat, p.id == chat):<6} {mark(p.embeddings, p.id == emb):<6} {key_state}")
-    typer.echo("\nChoose with RECALL_CHAT_PROVIDER / RECALL_EMBED_PROVIDER (or chat_provider / embed_provider in config.toml).")
+    typer.echo("\nChoose in the web UI's Settings, with `recall config set chat_provider <id>`, or RECALL_CHAT_PROVIDER / RECALL_EMBED_PROVIDER.")
+    typer.echo("Add a key with `recall keys set <provider>`.")
+
+
+config_app = typer.Typer(help="Show or change saved settings (the same ones as the web UI's Settings page).", no_args_is_help=True)
+app.add_typer(config_app, name="config")
+
+_SHOWN = ["chat_provider", "chat_model", "embed_provider", "embed_model", "llm_enabled", "describe", "reasoning_effort", "llm_timeout"]
+
+
+@config_app.command("show")
+def config_show() -> None:
+    """Show each setting, its value and where it comes from (env, settings, file, default)."""
+    from .providers import resolve as R
+    from .settings import store_for
+
+    cfg, _ = _ctx()
+    st = store_for(cfg)
+    for key in _SHOWN:
+        v = R.setting(cfg, st, key)
+        typer.echo(f"{key:<17} {v.value or '(auto)':<40} {typer.style(v.source, dim=True)}")
+    for key, value in sorted(st.all().items()):
+        if key.startswith("provider."):
+            typer.echo(f"{key:<17} {value:<40} {typer.style('settings', dim=True)}")
+    for e in st.custom():
+        typer.echo(f"custom endpoint   {e['id']}  {e['label']}  {e['base_url']}")
+
+
+@config_app.command("set")
+def config_set(key: Annotated[str, typer.Argument()], value: Annotated[str, typer.Argument()]) -> None:
+    """Save a setting, e.g. `recall config set chat_provider anthropic` or `provider.ollama.base_url http://box:11434`."""
+    from .settings import SettingsError, store_for
+
+    cfg, _ = _ctx()
+    try:
+        store_for(cfg).set(key, value)
+    except SettingsError as e:
+        _err(str(e))
+        raise typer.Exit(1)
+    if key in cfg.env_overrides:
+        _err(f"saved, but the environment variable for {key} overrides it")
+    typer.echo(f"{key} = {value}")
+
+
+@config_app.command("unset")
+def config_unset(key: Annotated[str, typer.Argument()]) -> None:
+    """Remove a saved setting (falls back to config.toml or the default)."""
+    from .settings import SettingsError, store_for
+
+    cfg, _ = _ctx()
+    try:
+        store_for(cfg).set(key, None)
+    except SettingsError as e:
+        _err(str(e))
+        raise typer.Exit(1)
+    typer.echo(f"{key} unset")
+
+
+keys_app = typer.Typer(help="Manage API keys (stored encrypted in the database).", no_args_is_help=True)
+app.add_typer(keys_app, name="keys")
+
+
+@keys_app.command("set")
+def keys_set(provider: Annotated[str, typer.Argument(help="Provider id, e.g. openai (see `recall providers`)")]) -> None:
+    """Save an API key. You're prompted for it, so it doesn't end up in your shell history."""
+    from .settings import SettingsError, store_for
+
+    cfg, _ = _ctx()
+    key = typer.prompt(f"API key for {provider}", hide_input=True)
+    try:
+        store_for(cfg).set_secret(provider, key)
+    except SettingsError as e:
+        _err(str(e))
+        raise typer.Exit(1)
+    typer.echo(f"saved (encrypted) key for {provider}")
+
+
+@keys_app.command("remove")
+def keys_remove(provider: Annotated[str, typer.Argument()]) -> None:
+    """Delete a saved API key."""
+    from .settings import store_for
+
+    cfg, _ = _ctx()
+    typer.echo("removed" if store_for(cfg).delete_secret(provider) else f"no saved key for {provider}")
 
 
 @app.command()

@@ -187,6 +187,24 @@ recall doctor      # checks both providers
 recall providers   # lists providers and which keys are set
 ```
 
+You can also save these choices instead of exporting variables. The web UI's Settings page and these commands change the same saved settings:
+
+```bash
+recall config set chat_provider anthropic
+recall config set chat_model <model id>
+recall keys set anthropic        # prompts for the key, so it stays out of your shell history
+recall config show               # every setting and where its value comes from
+```
+
+Saved settings beat `config.toml`, and environment variables beat both.
+
+**How API keys are stored.** Saved keys are encrypted (AES-256-GCM) in recall's database and are only shown in full through Settings → Reveal.
+- **On Windows**, the encryption key is protected with DPAPI, so only your Windows account can decrypt the keys.
+- **On Linux and macOS**, the encryption key is a file in the data directory that only you can read (`secret.key`, mode 0600). Anyone who can read your files can therefore decrypt the keys.
+- **In Docker**, set `RECALL_SECRET_KEY` to a passphrase so the encryption key isn't stored next to the data.
+
+**The Settings page only accepts changes from this computer.** The server refuses settings requests from other websites and from other hosts. If it listens on the network (`RECALL_WEB_HOST=0.0.0.0`, as in Docker), settings are read-only unless you set `RECALL_SETTINGS_TOKEN`. The Settings page then asks for that token.
+
 With a cloud provider, the text of your commands and their descriptions is sent to that provider. recall removes passwords, tokens and keys it recognises before storing a command. Changing the embedding provider or model re-embeds your whole history, which costs money with paid providers.
 
 ## Configuration
@@ -206,6 +224,8 @@ Settings come from `~/.config/recall/config.toml` (Windows: `%APPDATA%\recall\co
 | `RECALL_LLM_TIMEOUT` | `60` | Seconds |
 | `RECALL_LLM_ENABLED` | `1` | `0` never calls the chat model (embeddings only) |
 | `RECALL_DESCRIBE` | `1` | Write LLM descriptions at ingest |
+| `RECALL_SECRET_KEY` | | Passphrase for encrypting saved API keys, instead of a key file (useful in Docker) |
+| `RECALL_SETTINGS_TOKEN` | | Lets the Settings page make changes when the server listens on the network |
 | `RECALL_DATA_DIR` | `~/.local/share/recall` (Windows: `%LOCALAPPDATA%\recall`) | SQLite DB, Chroma directory, spool |
 | `RECALL_WEB_HOST` / `RECALL_WEB_PORT` | `127.0.0.1` / `8765` | Web UI bind address |
 | `RECALL_KEY` | `\C-g` | Picker key binding (shell only) |

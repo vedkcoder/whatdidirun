@@ -179,7 +179,12 @@ def ingest(
         from .config import _to_bool
         from .providers import resolve as R
 
-        settings = getattr(lm, "settings", None)
+        if lm is not None:
+            settings = lm.settings
+        else:
+            from .settings import store_for
+
+            settings = store_for(cfg)
         describe = _to_bool(R.setting(cfg, settings, "describe").value) and _to_bool(R.setting(cfg, settings, "llm_enabled").value)
     with _lock(cfg.data_dir / "ingest.lock", blocking=wait) as got:
         if not got:

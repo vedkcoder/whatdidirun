@@ -92,6 +92,14 @@ def create_app(cfg: Config, background_indexer: bool = True) -> FastAPI:
             repos, _dirs = searcher.known_locations()
         return {"repos": sorted(repos, key=str.lower)}
 
+    def settings_changed():
+        with lock:
+            searcher.reload()
+
+    from .settings_api import router as settings_router
+
+    app.include_router(settings_router(cfg, settings_changed))
+
     @app.get("/api/health")
     def health():
         lm = searcher.lm

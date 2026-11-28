@@ -143,6 +143,21 @@ jobs:
           if (-not $ok) { throw 'tray app did not serve the web UI within 120 s' }
           (Invoke-WebRequest http://127.0.0.1:8765/ -UseBasicParsing).Content.Substring(0, 60)
 
+          # Settings API: save an API key (encrypted with a DPAPI-wrapped master key), see it masked, reveal it.
+          $h = @{ 'X-Recall-Request' = '1' }
+          $secret = 'sk-ci-test-0123456789'
+          Invoke-RestMethod -Method Put http://127.0.0.1:8765/api/settings/keys/openai -Headers $h -ContentType 'application/json' -Body (@{ api_key = $secret } | ConvertTo-Json) | Out-Null
+          $settings = Invoke-WebRequest http://127.0.0.1:8765/api/settings -Headers $h -UseBasicParsing
+          if ($settings.Content -match [regex]::Escape($secret)) { throw 'settings response leaked the API key' }
+          $openai = ($settings.Content | ConvertFrom-Json).providers | Where-Object id -eq 'openai'
+          if ($openai.key.hint -ne '…6789') { throw "unexpected key hint: $($openai.key.hint)" }
+          if (($settings.Content | ConvertFrom-Json).key_backend -ne 'dpapi') { throw 'expected the DPAPI key backend' }
+          $revealed = Invoke-RestMethod -Method Post http://127.0.0.1:8765/api/settings/keys/openai/reveal -Headers $h
+          if ($revealed.api_key -ne $secret) { throw 'reveal did not return the saved key' }
+          if (-not (Test-Path (Join-Path $env:RECALL_DATA_DIR 'secret.key.dpapi'))) { throw 'DPAPI master key file missing' }
+          try { Invoke-RestMethod http://127.0.0.1:8765/api/settings | Out-Null; throw 'settings answered without X-Recall-Request' } catch { if ($_.Exception.Response.StatusCode.value__ -ne 403) { throw } }
+          'settings API OK'
+
           # Uninstall (the uninstaller relaunches itself from %TEMP%, so wait for the files to go).
           Start-Process "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
           foreach ($i in 1..60) { if (-not (Test-Path "$app\recall.exe")) { break }; Start-Sleep 2 }
