@@ -245,7 +245,9 @@ git tag -a v0.2.0 -m "WhatdidIRun?? 0.2.0"
 git push origin main v0.2.0
 ```
 
-The workflow runs the tests, builds the wheel and sdist with the web UI bundled, builds the Windows installer, and pushes a multi-arch image to `ghcr.io/vedkcoder/whatdidirun` tagged `0.2.0`, `0.2` and `latest`. It then creates a GitHub Release with generated notes and attaches the wheel, sdist and `setup.exe`. Pull requests run the same tests on Linux and Windows and upload a test installer as the `windows-installer` artifact. To release an existing tag again, open **Actions → Release → Run workflow** and enter the tag.
+Version numbers are `X.Y.Z` for releases and `X.Y.Z.N` for bugfix releases. For example, `0.1.3.1` is the first bugfix for `0.1.3`.
+
+The workflow runs the tests, builds the wheel and sdist with the web UI bundled, builds the Windows installer, and pushes a multi-arch image to `ghcr.io/vedkcoder/whatdidirun` tagged with the full version (`0.2.0`), `0.2` and `latest`. It then creates a GitHub Release with generated notes and attaches the wheel, sdist and `setup.exe`. Pull requests run the same tests on Linux and Windows and upload a test installer as the `windows-installer` artifact. To release an existing tag again, open **Actions → Release → Run workflow** and enter the tag.
 
 ## Contributing
 

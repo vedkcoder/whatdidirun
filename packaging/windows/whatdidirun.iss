@@ -1,6 +1,6 @@
 ; Inno Setup 6 script for the Windows installer.
 ; Build (after PyInstaller has produced dist\WhatDidIRun):
-;   iscc /DAppVersion=0.1.2 packaging\windows\whatdidirun.iss
+;   iscc /DAppVersion=0.1.3.1 packaging\windows\whatdidirun.iss
 ; Output: dist\installer\WhatDidIRun-<version>-setup.exe
 ;
 ; Per-user install (no admin): %LOCALAPPDATA%\Programs\WhatDidIRun, added to the user PATH.
